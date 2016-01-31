@@ -2,12 +2,11 @@ package main
 
 import (
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	influxdb "github.com/influxdb/influxdb/client"
+	"github.com/influxdb/influxdb/client/v2"
 	"github.com/oleiade/lane"
 )
 
@@ -27,7 +26,7 @@ type InfluxDBConf struct {
 }
 
 type InfluxDBClient struct {
-	Client *influxdb.Client
+	Client client.Client
 	Config InfluxDBConf
 
 	Status string
@@ -43,22 +42,12 @@ func NewInfluxDBClient(conf InfluxDBConf, ifChan chan Message, commandChan chan 
 	host := fmt.Sprintf("http://%s:%d", conf.Hostname, conf.Port)
 	log.Infof("influxdb host: %s", host)
 
-	u, err := url.Parse(host)
-	if err != nil {
-		return nil, err
-	}
-	ifConf := influxdb.Config{
-		URL:      *u,
+	ifConf := client.HTTPConfig{
+		Addr:     host,
 		Username: conf.UserName,
 		Password: conf.Password,
-		//		IsUDP:    conf.UDP,
 	}
-	con, err := influxdb.NewClient(ifConf)
-	if err != nil {
-		return nil, err
-	}
-	// Check connectivity
-	_, _, err = con.Ping()
+	con, err := client.NewHTTPClient(ifConf)
 	if err != nil {
 		return nil, err
 	}
@@ -108,15 +97,11 @@ func (ifc *InfluxDBClient) Send() error {
 		}
 		buf[i] = m
 	}
-	bp := Msg2Series(buf)
-	bp.Database = ifc.Config.Db
+	bp := Msg2Series(buf, ifc.Config.Db)
 
-	var res *influxdb.Response
-	if res, err = ifc.Client.Write(bp); err != nil {
+	err = ifc.Client.Write(bp)
+	if err != nil {
 		return err
-	}
-	if res != nil && res.Err != nil {
-		return res.Err
 	}
 	return nil
 }
@@ -157,12 +142,20 @@ func (ifc *InfluxDBClient) Start() error {
 	return nil
 }
 
-func Msg2Series(msgs []Message) influxdb.BatchPoints {
-	pts := make([]influxdb.Point, 0, len(msgs))
-	now := time.Now()
+func Msg2Series(msgs []Message, database string) client.BatchPoints {
+
+	// Create a new point batch
+	bp, _ := client.NewBatchPoints(client.BatchPointsConfig{
+		Database:  database,
+		Precision: "s",
+	})
 
 	for _, msg := range msgs {
 		if msg.Topic == "" && len(msg.Payload) == 0 {
+			break
+		}
+		tokens := strings.Split(msg.Topic, "/")
+		if len(tokens) < 2 {
 			break
 		}
 		j, err := MsgParse(msg.Payload)
@@ -170,22 +163,19 @@ func Msg2Series(msgs []Message) influxdb.BatchPoints {
 			log.Warn(err)
 			continue
 		}
-		name := strings.Replace(msg.Topic, "/", ".", -1)
+		//name := strings.Replace(msg.Topic, "/", ".", -1)
+		name := strings.Join(tokens[1:], "_")
 		tags := map[string]string{
-			"topic": msg.Topic,
+			"device": tokens[0],
 		}
-		pt := influxdb.Point{
-			Measurement: name,
-			Tags:        tags,
-			Fields:      j,
-			Time:        now,
-			Precision:   "s", // TODO
+		pt, err := client.NewPoint(name, tags, j, time.Now())
+
+		if err != nil {
+			break
 		}
-		pts = append(pts, pt)
-	}
-	bp := influxdb.BatchPoints{
-		RetentionPolicy: "default",
-		Points:          pts,
+		bp.AddPoint(pt)
+
+		fmt.Printf("%+v\n", pt)
 	}
 
 	return bp

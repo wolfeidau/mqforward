@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"strconv"
 
 	msgpack "gopkg.in/vmihailenco/msgpack.v1"
 )
@@ -15,7 +17,18 @@ type Message struct {
 }
 
 func MsgParse(payload []byte) (map[string]interface{}, error) {
-	var j map[string]interface{}
+	j := map[string]interface{}{}
+
+	if !bytes.HasPrefix(payload, []byte("{")) {
+		f, err := strconv.ParseFloat(string(payload), 64)
+
+		if err == nil {
+			// ship it
+			j["v"] = f
+
+			return j, nil
+		}
+	}
 
 	// first, try msgpack
 	err := msgpack.Unmarshal(payload, &j)
