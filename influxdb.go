@@ -6,7 +6,7 @@ import (
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/influxdb/influxdb/client/v2"
+	client "github.com/influxdata/influxdb/client/v2"
 	"github.com/oleiade/lane"
 )
 
